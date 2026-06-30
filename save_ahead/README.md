@@ -1,6 +1,6 @@
 # save_ahead
 
-A new Flutter project to save money for quarter, half and annual subscription or for pay dues or buy items.
+A new Flutter project to save money for quarter, half and annual subscription or for paying dues or buying items.
 
 ## Getting Started
 
