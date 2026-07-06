@@ -31,7 +31,7 @@ class _SplashScreenState extends State<SplashScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Lottie.asset('assets/jsons/save_money.json'),
+            Lottie.asset('assets/jsons/save_money.json', height: 200, fit: BoxFit.fitHeight),
             const SizedBox(height: 20,),
             const Text('Save Ahead', style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold),),
             const SizedBox(height: 10,),
