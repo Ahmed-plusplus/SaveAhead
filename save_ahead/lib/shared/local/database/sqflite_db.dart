@@ -1,3 +1,6 @@
+import 'package:save_ahead/models/debt_model.dart';
+import 'package:save_ahead/models/subscription_model.dart';
+import 'package:save_ahead/shared/local/database/db_constants.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 
@@ -10,7 +13,8 @@ class SqfliteDB {
     version: 1,
     onCreate: (database, version) async {
       try {
-        // await database.execute(_createOperationTable());
+        await database.execute(_createSubscriptionTable());
+        await database.execute(_createDebtTable());
       } catch (e) {
         print(e.toString());
       }
@@ -28,46 +32,70 @@ class SqfliteDB {
     },
   );
 
-  // static String _createOperationTable() {
-  //   return 'CREATE TABLE ${TransactionConstants.TRANSACTION_TABLE} ('
-  //       '${TransactionConstants.ID_ATTR} INTEGER PRIMARY KEY AUTOINCREMENT,'
-  //       '${TransactionConstants.NAME_ATTR} TEXT,'
-  //       '${TransactionConstants.CURRENCY_ATTR} TEXT,'
-  //       '${TransactionConstants.AMOUNT_ATTR} REAL,'
-  //       '${TransactionConstants.DATE_ATTR} INTEGER,'
-  //       '${TransactionConstants.DESCRIPTION_ATTR} TEXT,'
-  //       '${TransactionConstants.TOTAL_AMOUNT_ATTR} REAL,'
-  //       '${TransactionConstants.TYPE_ATTR} INTEGER'
-  //       ')';
-  // }
+  static String _createSubscriptionTable() {
+    return 'CREATE TABLE ${DbConstants.SUBSCRIPTION_TABLE} ('
+        '${DbConstants.ID_ATTR} INTEGER PRIMARY KEY AUTOINCREMENT,'
+        '${DbConstants.NAME_ATTR} TEXT UNIQUE,'
+        '${DbConstants.AMOUNT_ATTR} REAL,'
+        '${DbConstants.STARTING_DATE_ATTR} INTEGER,'
+        '${DbConstants.DURATION_TYPE_ATTR} INTEGER,'
+        '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR} REAL'
+        ')';
+  }
+
+  static String _createDebtTable() {
+    return 'CREATE TABLE ${DbConstants.DEPT_TABLE} ('
+        '${DbConstants.ID_ATTR} INTEGER PRIMARY KEY AUTOINCREMENT,'
+        '${DbConstants.NAME_ATTR} TEXT UNIQUE,'
+        '${DbConstants.AMOUNT_ATTR} REAL,'
+        '${DbConstants.ENDING_DATE_ATTR} INTEGER,'
+        '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR} REAL'
+        ')';
+  }
 
   Future<List<Map<String, dynamic>>> getData(String query, List<Object?> args) async {
     return await _database.rawQuery(query, args);
   }
 
-  // Future<ChildExpensesChangingModel> insertChildData(ChildExpensesChangingModel child, TransactionType type) async {
-  //   child.id = await _database.transaction((txn) {
-  //     return txn
-  //         .rawInsert('INSERT INTO ${TransactionConstants.TRANSACTION_TABLE} ('
-  //         '${TransactionConstants.NAME_ATTR},'
-  //         '${TransactionConstants.CURRENCY_ATTR},'
-  //         '${TransactionConstants.AMOUNT_ATTR},'
-  //         '${TransactionConstants.DATE_ATTR},'
-  //         '${TransactionConstants.DESCRIPTION_ATTR},'
-  //         '${TransactionConstants.TOTAL_AMOUNT_ATTR},'
-  //         '${TransactionConstants.TYPE_ATTR}'
-  //         ') VALUES ('
-  //         '"${child.name}",'
-  //         '"${child.expenses.$1.name}",'
-  //         '${child.expenses.$2},'
-  //         '${child.dateTime!.millisecondsSinceEpoch},'
-  //         '"${child.description}",'
-  //         '${child.total.$2},'
-  //         '${type.index}'
-  //         ')');
-  //   });
-  //   return child;
-  // }
+  Future<int> insertSubscriptionData(SubscriptionModel subscription) async {
+    return await _database.transaction((txn) {
+      return txn.rawInsert(
+        'INSERT INTO ${DbConstants.SUBSCRIPTION_TABLE} ('
+            '${DbConstants.NAME_ATTR},'
+            '${DbConstants.AMOUNT_ATTR},'
+            '${DbConstants.STARTING_DATE_ATTR},'
+            '${DbConstants.DURATION_TYPE_ATTR},'
+            '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR}'
+            ') VALUES (?,?,?,?,?)',
+        [
+          subscription.name,
+          subscription.amount,
+          subscription.startingDate.millisecondsSinceEpoch,
+          subscription.durationType.index,
+          subscription.currentSavedAmount,
+        ],
+      );
+    });
+  }
+
+  Future<int> insertDebtData(DebtModel debt) async {
+    return await _database.transaction((txn) {
+      return txn.rawInsert(
+        'INSERT INTO ${DbConstants.DEPT_TABLE} ('
+            '${DbConstants.NAME_ATTR},'
+            '${DbConstants.AMOUNT_ATTR},'
+            '${DbConstants.ENDING_DATE_ATTR},'
+            '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR}'
+            ') VALUES (?,?,?,?)',
+        [
+          debt.name,
+          debt.amount,
+          debt.endingDate.millisecondsSinceEpoch,
+          debt.currentSavedAmount,
+        ],
+      );
+    });
+  }
 
   Future<double> getTotalSavedAmount() async {
     return Future.value(10.0);
