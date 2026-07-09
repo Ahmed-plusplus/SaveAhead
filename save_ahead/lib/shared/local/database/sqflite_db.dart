@@ -1,5 +1,7 @@
 import 'package:save_ahead/models/debt_model.dart';
 import 'package:save_ahead/models/subscription_model.dart';
+import 'package:save_ahead/shared/enum/duration_type.dart';
+import 'package:save_ahead/shared/extensions/date_time_extension.dart';
 import 'package:save_ahead/shared/local/database/db_constants.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
@@ -38,6 +40,7 @@ class SqfliteDB {
         '${DbConstants.NAME_ATTR} TEXT UNIQUE,'
         '${DbConstants.AMOUNT_ATTR} REAL,'
         '${DbConstants.STARTING_DATE_ATTR} INTEGER,'
+        '${DbConstants.ENDING_DATE_ATTR} INTEGER,'
         '${DbConstants.DURATION_TYPE_ATTR} INTEGER,'
         '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR} REAL'
         ')';
@@ -62,15 +65,17 @@ class SqfliteDB {
       return txn.rawInsert(
         'INSERT INTO ${DbConstants.SUBSCRIPTION_TABLE} ('
             '${DbConstants.NAME_ATTR},'
-            '${DbConstants.AMOUNT_ATTR},'
+            '${DbConstants.AMOUNT_ATTR},' //update
             '${DbConstants.STARTING_DATE_ATTR},'
-            '${DbConstants.DURATION_TYPE_ATTR},'
+            '${DbConstants.ENDING_DATE_ATTR},'
+            '${DbConstants.DURATION_TYPE_ATTR},' //update
             '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR}'
-            ') VALUES (?,?,?,?,?)',
+            ') VALUES (?,?,?,?,?,?)',
         [
           subscription.name,
           subscription.amount,
           subscription.startingDate.millisecondsSinceEpoch,
+          subscription.startingDate.addWRT(subscription.durationType).millisecondsSinceEpoch,
           subscription.durationType.index,
           subscription.currentSavedAmount,
         ],
@@ -83,8 +88,8 @@ class SqfliteDB {
       return txn.rawInsert(
         'INSERT INTO ${DbConstants.DEPT_TABLE} ('
             '${DbConstants.NAME_ATTR},'
-            '${DbConstants.AMOUNT_ATTR},'
-            '${DbConstants.ENDING_DATE_ATTR},'
+            '${DbConstants.AMOUNT_ATTR},' //update
+            '${DbConstants.ENDING_DATE_ATTR},' //update
             '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR}'
             ') VALUES (?,?,?,?)',
         [
@@ -97,57 +102,154 @@ class SqfliteDB {
     });
   }
 
-  Future<double> getTotalSavedAmount() async {
-    return Future.value(10.0);
-    // var result = await getData(
-    //     'SELECT SUM(${TransactionConstants.AMOUNT_ATTR}) FROM "${TransactionConstants.TRANSACTION_TABLE}" WHERE ${TransactionConstants.TYPE_ATTR} == ${TransactionType.customTransaction.index}',
-    //     []
-    // );
-    // return result[0]['SUM(${TransactionConstants.AMOUNT_ATTR})'];
+  String _getMonthsBetween(String startingDate, String endingDate, String isDaysCalculated) {
+    return '((strftime(\'%Y\', $endingDate) - strftime(\'%Y\', $startingDate)) * 12'
+        ' + '
+        '(strftime(\'%m\', $endingDate) - strftime(\'%m\', $startingDate)))'
+        ' - '
+        'CASE '
+          'WHEN $isDaysCalculated THEN '
+            'CASE '
+              'WHEN strftime(\'%d\', $endingDate < strftime(\'%d\', $startingDate) '
+              'THEN 1 '
+              'ELSE 0 '
+            'END '
+          'ELSE 0 '
+        'END'
+        ' + 1'; // +1 to include the starting month
   }
-  // Future<List<ChildExpensesChangingModel>> getChildTransactions(String name) async {
-  //   List<Map<String, dynamic>> list = await getData(
-  //     'SELECT * FROM "${TransactionConstants.TRANSACTION_TABLE}" WHERE ${TransactionConstants.NAME_ATTR} = ?',
-  //     [name],
-  //   );
-  //   return list.reversed
-  //       .map(
-  //         (map) => ChildExpensesChangingModel(
-  //       id: map[TransactionConstants.ID_ATTR],
-  //       name: map[TransactionConstants.NAME_ATTR],
-  //       expenses: (Currency.values.where((currency) => currency.name == map[TransactionConstants.CURRENCY_ATTR]).first, map[TransactionConstants.AMOUNT_ATTR]),
-  //       dateTime: DateTime.fromMillisecondsSinceEpoch(map[TransactionConstants.DATE_ATTR]),
-  //       description: map[TransactionConstants.DESCRIPTION_ATTR],
-  //       total: (Currency.values.where((currency) => currency.name == map[TransactionConstants.CURRENCY_ATTR]).first, map[TransactionConstants.TOTAL_AMOUNT_ATTR]),
-  //     ),
-  //   )
-  //       .toList();
-  // }
 
-  // Future<double> getCustomTransactionValue(String name, DateTime from, Currency curr, bool increaseOnly) async{
-  //   var result = await getData(
-  //       'SELECT SUM(${TransactionConstants.AMOUNT_ATTR}) FROM "${TransactionConstants.TRANSACTION_TABLE}" WHERE '
-  //           '${TransactionConstants.DATE_ATTR} >= ? AND '
-  //           '${TransactionConstants.CURRENCY_ATTR} == ? AND '
-  //           '${TransactionConstants.NAME_ATTR} == ? AND '
-  //           '${(increaseOnly) ? '${TransactionConstants.AMOUNT_ATTR} > 0 AND ' : ''}'
-  //           '${TransactionConstants.TYPE_ATTR} == ${TransactionType.customTransaction.index}',
-  //       [from.millisecondsSinceEpoch, curr.name, name]
-  //   );
-  //   return result[0]['SUM(${TransactionConstants.AMOUNT_ATTR})'];
-  // }
+  Future<double> _getTotalSavedAmountForSubscriptions() async {
+    DateTime today = DateTime.now().dateOnly();
+    String query = 'SELECT SUM('
+        '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR}'
+        ' + '
+        '(${DbConstants.AMOUNT_ATTR} - ${DbConstants.CURRENT_SAVED_AMOUNT_ATTR})'
+        ' / '
+        '(${
+          _getMonthsBetween(
+            today.millisecondsSinceEpoch.toString(),
+            DbConstants.ENDING_DATE_ATTR,
+            '${DbConstants.DURATION_TYPE_ATTR} <= ${DurationType.threeHundredSixtyFiveDays.index}'
+          )
+        })'
+    //TODO:: think about if the type 28 or 30 days and the starting date is 1st of the month and today is 28th or 30th of the month, then it will be counted as 1 time, but it should be counted as 2 times. So we need to check if the starting date + duration get a date of this month, then we can count it as 2 months, otherwise we can count it as 1 month.
+        ') as TOTAL FROM "${DbConstants.SUBSCRIPTION_TABLE}"';
+    print(query);
+    var result = await getData(
+        query,
+        []
+    );
+    return result[0]['TOTAL'] ?? 0.0;
+  }
 
-  // Future<int> updateDescription(int id, String description) async {
-  //   return await _database.rawUpdate(
-  //     'UPDATE ${TransactionConstants.TRANSACTION_TABLE} SET ${TransactionConstants.DESCRIPTION_ATTR} = ? WHERE ${TransactionConstants.ID_ATTR} = ?',
-  //     [description, id],
-  //   );
-  // }
+  Future<double> _getTotalSavedAmountForDebts() async {
+    DateTime today = DateTime.now().dateOnly();
+    String query = 'SELECT SUM('
+        '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR}'
+        ' + '
+        '(${DbConstants.AMOUNT_ATTR} - ${DbConstants.CURRENT_SAVED_AMOUNT_ATTR})'
+        ' / '
+        '(${_getMonthsBetween(
+            today.millisecondsSinceEpoch.toString(),
+            DbConstants.ENDING_DATE_ATTR,
+            'FALSE')
+        })'
+        ') as TOTAL FROM "${DbConstants.DEPT_TABLE}"';
+    print(query);
+    var result = await getData(
+        query,
+        []
+    );
+    return result[0]['TOTAL'] ?? 0.0;
+  }
 
-  // Future<int> removeChild(String name) async {
-  //   return await _database.rawDelete(
-  //     'DELETE FROM ${TransactionConstants.TRANSACTION_TABLE} WHERE ${TransactionConstants.NAME_ATTR} = ?',
-  //     [name],
-  //   );
-  // }
+  Future<double> getTotalSavedAmount() async {
+    double totalSavedAmountForSubscriptions = await _getTotalSavedAmountForSubscriptions();
+    double totalSavedAmountForDebts = await _getTotalSavedAmountForDebts();
+
+    return totalSavedAmountForSubscriptions + totalSavedAmountForDebts;
+  }
+
+  Future<List<SubscriptionModel>> getAllSubscriptions() async {
+    List<Map<String, dynamic>> list = await getData(
+      'SELECT * FROM "${DbConstants.SUBSCRIPTION_TABLE}"',
+      [],
+    );
+    return list
+        .map(
+          (it) => SubscriptionModel(
+            it[DbConstants.NAME_ATTR],
+            it[DbConstants.AMOUNT_ATTR],
+            DateTime.fromMillisecondsSinceEpoch(it[DbConstants.STARTING_DATE_ATTR]),
+            DurationType.values[it[DbConstants.DURATION_TYPE_ATTR]],
+            it[DbConstants.CURRENT_SAVED_AMOUNT_ATTR],
+            DateTime.fromMillisecondsSinceEpoch(it[DbConstants.ENDING_DATE_ATTR])
+          ),
+        )
+        .toList();
+  }
+
+  Future<List<DebtModel>> getAllDebts() async {
+    List<Map<String, dynamic>> list = await getData(
+      'SELECT * FROM "${DbConstants.DEPT_TABLE}"',
+      [],
+    );
+    return list
+        .map(
+          (it) => DebtModel(
+            it[DbConstants.NAME_ATTR],
+            it[DbConstants.AMOUNT_ATTR],
+            DateTime.fromMillisecondsSinceEpoch(it[DbConstants.ENDING_DATE_ATTR]),
+            it[DbConstants.CURRENT_SAVED_AMOUNT_ATTR],
+          ),
+        )
+        .toList();
+  }
+
+  Future<void> renewSubscription() async {
+    await _database.rawUpdate(
+      'UPDATE ${DbConstants.SUBSCRIPTION_TABLE} '
+      //TODO:: change the starting date and ending date
+          // 'SET ${DbConstants.STARTING_DATE_ATTR} = ${DbConstants.ENDING_DATE_ATTR}, '
+          // 'SET ${DbConstants.ENDING_DATE_ATTR} = ${DbConstants.STARTING_DATE_ATTR} + '
+          // '(${DbConstants.DURATION_TYPE_ATTR} * 30 * 24 * 60 * 60 * 1000), '
+          'SET ${DbConstants.CURRENT_SAVED_AMOUNT_ATTR} = 0 '
+          'WHERE ${DbConstants.ENDING_DATE_ATTR} <= ?',
+      [DateTime.now().dateOnly().millisecondsSinceEpoch],
+    );
+  }
+
+  Future<int> updateSubscription(String name, double newAmount, DurationType type) async {
+    return await _database.rawUpdate(
+      'UPDATE ${DbConstants.SUBSCRIPTION_TABLE} '
+          'SET ${DbConstants.AMOUNT_ATTR} = ?, ${DbConstants.DURATION_TYPE_ATTR} = ? '
+          'WHERE ${DbConstants.NAME_ATTR} = ?',
+      [newAmount, type.index, name],
+    );
+  }
+
+  Future<int> updateDebt(String name, double newAmount, DateTime endingDate) async {
+    return await _database.rawUpdate(
+      'UPDATE ${DbConstants.DEPT_TABLE} '
+          'SET ${DbConstants.AMOUNT_ATTR} = ?, ${DbConstants.ENDING_DATE_ATTR} = ? '
+          'WHERE ${DbConstants.NAME_ATTR} = ?',
+      [newAmount, endingDate.millisecondsSinceEpoch, name],
+    );
+  }
+
+  Future<int> removeSubscription(String name) async {
+    return await _database.rawDelete(
+      'DELETE FROM ${DbConstants.SUBSCRIPTION_TABLE} WHERE ${DbConstants.NAME_ATTR} = ?',
+      [name],
+    );
+  }
+
+  Future<int> removeDebt(String name) async {
+    return await _database.rawDelete(
+      'DELETE FROM ${DbConstants.DEPT_TABLE} WHERE ${DbConstants.NAME_ATTR} = ?',
+      [name],
+    );
+  }
+
 }

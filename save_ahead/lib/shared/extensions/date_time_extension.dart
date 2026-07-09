@@ -2,18 +2,26 @@ import 'package:save_ahead/shared/enum/duration_type.dart';
 
 extension DateTimeExtension on DateTime {
 
+  DateTime dateOnly() => copyWith(
+    microsecond: 0,
+    millisecond: 0,
+    second: 0,
+    minute: 0,
+    hour: 0,
+  );
+
   DateTime addWRT(DurationType durationType) {
     switch (durationType) {
       case DurationType.twentyEightDays:
-        return this.add(const Duration(days: 28));
+        return add(const Duration(days: 28));
       case DurationType.thirtyDays:
-        return this.add(const Duration(days: 30));
+        return add(const Duration(days: 30));
       case DurationType.ninetyDays:
-        return this.add(const Duration(days: 90));
+        return add(const Duration(days: 90));
       case DurationType.oneHundredEightyDays:
-        return this.add(const Duration(days: 180));
+        return add(const Duration(days: 180));
       case DurationType.threeHundredSixtyFiveDays:
-        return this.add(const Duration(days: 365));
+        return add(const Duration(days: 365));
       case DurationType.oneMonth:
         return _addMonths(this, 1);
       case DurationType.threeMonths:

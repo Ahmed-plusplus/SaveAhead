@@ -4,11 +4,12 @@ class SubscriptionModel {
   String name;
   double amount;
   DateTime startingDate;
+  DateTime? endingDate;
   DurationType durationType;
   double currentSavedAmount;
 
   SubscriptionModel(this.name, this.amount, this.startingDate,
-      this.durationType, this.currentSavedAmount);
+      this.durationType, this.currentSavedAmount, [this.endingDate]);
 
 
 }
