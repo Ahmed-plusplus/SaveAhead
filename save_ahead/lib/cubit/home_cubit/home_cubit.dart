@@ -14,7 +14,7 @@ class HomeCubit extends Cubit<HomeStates> {
   double totalSaved = 0.0;
 
   Future<void> calculateTotalSaved() async {
-    totalSaved = await sqfliteDB.getTotalSavedAmount();
+    // totalSaved = await sqfliteDB.getTotalSavedAmount();
     emit(CalculateTotalSavedState());
   }
 

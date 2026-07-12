@@ -11,4 +11,5 @@ class DbConstants {
   static const String ENDING_DATE_ATTR = 'ending_date';
   static const String DURATION_TYPE_ATTR = 'duration_type';
   static const String CURRENT_SAVED_AMOUNT_ATTR = 'current_saved_amount';
+  static const String TWISE_IN_MONTH_ATTR = 'twice_in_month';
 }

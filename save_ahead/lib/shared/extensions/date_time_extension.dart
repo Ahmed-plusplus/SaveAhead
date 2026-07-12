@@ -84,4 +84,10 @@ extension DateTimeExtension on DateTime {
   int _daysInMonth(int year, int month) {
     return DateTime(year, month + 1, 0).day;
   }
+
+  int getMonthsDifference(DateTime other) {
+    int yearDiff = year - other.year;
+    int monthDiff = month - other.month;
+    return yearDiff * 12 + monthDiff + 1;
+  }
 }

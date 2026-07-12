@@ -42,7 +42,8 @@ class SqfliteDB {
         '${DbConstants.STARTING_DATE_ATTR} INTEGER,'
         '${DbConstants.ENDING_DATE_ATTR} INTEGER,'
         '${DbConstants.DURATION_TYPE_ATTR} INTEGER,'
-        '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR} REAL'
+        '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR} REAL,'
+        '${DbConstants.TWISE_IN_MONTH_ATTR} INTEGER'
         ')';
   }
 
@@ -61,6 +62,18 @@ class SqfliteDB {
   }
 
   Future<int> insertSubscriptionData(SubscriptionModel subscription) async {
+    int months = -1;
+    if(subscription.durationType.index <= DurationType.thirtyDays.index) {
+      Duration duration = Duration(days: (subscription.durationType.index == 0) ? 28 : 30);
+      DateTime currRenew = subscription.startingDate;
+      DateTime nextRenew = currRenew.add(duration);
+      months = 0;
+      while (currRenew.month != nextRenew.month) {
+        months++;
+        currRenew = nextRenew;
+        nextRenew = currRenew.add(duration);
+      }
+    }
     return await _database.transaction((txn) {
       return txn.rawInsert(
         'INSERT INTO ${DbConstants.SUBSCRIPTION_TABLE} ('
@@ -69,8 +82,9 @@ class SqfliteDB {
             '${DbConstants.STARTING_DATE_ATTR},'
             '${DbConstants.ENDING_DATE_ATTR},'
             '${DbConstants.DURATION_TYPE_ATTR},' //update
-            '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR}'
-            ') VALUES (?,?,?,?,?,?)',
+            '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR}, '
+            '${DbConstants.TWISE_IN_MONTH_ATTR}'
+            ') VALUES (?,?,?,?,?,?,?)',
         [
           subscription.name,
           subscription.amount,
@@ -78,6 +92,7 @@ class SqfliteDB {
           subscription.startingDate.addWRT(subscription.durationType).millisecondsSinceEpoch,
           subscription.durationType.index,
           subscription.currentSavedAmount,
+          months
         ],
       );
     });
@@ -103,14 +118,14 @@ class SqfliteDB {
   }
 
   String _getMonthsBetween(String startingDate, String endingDate, String isDaysCalculated) {
-    return '((strftime(\'%Y\', $endingDate) - strftime(\'%Y\', $startingDate)) * 12'
+    return '((strftime(\'%Y\', $endingDate / 1000, \'unixepoch\') - strftime(\'%Y\', $startingDate / 1000, \'unixepoch\')) * 12'
         ' + '
-        '(strftime(\'%m\', $endingDate) - strftime(\'%m\', $startingDate)))'
+        '(strftime(\'%m\', $endingDate / 1000, \'unixepoch\') - strftime(\'%m\', $startingDate / 1000, \'unixepoch\')))'
         ' - '
         'CASE '
           'WHEN $isDaysCalculated THEN '
             'CASE '
-              'WHEN strftime(\'%d\', $endingDate < strftime(\'%d\', $startingDate) '
+              'WHEN strftime(\'%d\', $endingDate / 1000, \'unixepoch\') < strftime(\'%d\', $startingDate / 1000, \'unixepoch\') '
               'THEN 1 '
               'ELSE 0 '
             'END '
@@ -121,19 +136,35 @@ class SqfliteDB {
 
   Future<double> _getTotalSavedAmountForSubscriptions() async {
     DateTime today = DateTime.now().dateOnly();
+    DateTime firstMonth = today.copyWith(day: 1);
+    DateTime nextMonth = firstMonth.copyWith(month: firstMonth.month + 1);
     String query = 'SELECT SUM('
-        '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR}'
-        ' + '
-        '(${DbConstants.AMOUNT_ATTR} - ${DbConstants.CURRENT_SAVED_AMOUNT_ATTR})'
-        ' / '
-        '(${
-          _getMonthsBetween(
-            today.millisecondsSinceEpoch.toString(),
-            DbConstants.ENDING_DATE_ATTR,
-            '${DbConstants.DURATION_TYPE_ATTR} <= ${DurationType.threeHundredSixtyFiveDays.index}'
-          )
-        })'
-    //TODO:: think about if the type 28 or 30 days and the starting date is 1st of the month and today is 28th or 30th of the month, then it will be counted as 1 time, but it should be counted as 2 times. So we need to check if the starting date + duration get a date of this month, then we can count it as 2 months, otherwise we can count it as 1 month.
+        'CASE WHEN ${DbConstants.STARTING_DATE_ATTR} >= ${firstMonth.millisecondsSinceEpoch}'
+        ' AND ${DbConstants.STARTING_DATE_ATTR} < ${nextMonth.millisecondsSinceEpoch}'
+        ' THEN '
+          '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR}'
+        ' ELSE '
+          '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR}'
+          ' + '
+          '((${DbConstants.AMOUNT_ATTR} - ${DbConstants.CURRENT_SAVED_AMOUNT_ATTR})'
+          ' / '
+          '(${
+            _getMonthsBetween(
+              today.millisecondsSinceEpoch.toString(),
+              DbConstants.ENDING_DATE_ATTR,
+              '${DbConstants.DURATION_TYPE_ATTR} <= ${DurationType.threeHundredSixtyFiveDays.index}'
+            )
+          }))'
+          ' + '
+          'CASE WHEN ${DbConstants.TWISE_IN_MONTH_ATTR} > 0 THEN '
+            '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR}'
+            ' + '
+            '((${DbConstants.AMOUNT_ATTR} - ${DbConstants.CURRENT_SAVED_AMOUNT_ATTR})'
+            ' / '
+            '${DbConstants.TWISE_IN_MONTH_ATTR})'
+          ' ELSE 0 '
+          ' END'
+        ' END'
         ') as TOTAL FROM "${DbConstants.SUBSCRIPTION_TABLE}"';
     print(query);
     var result = await getData(
@@ -190,6 +221,23 @@ class SqfliteDB {
         .toList();
   }
 
+
+  Future<List<SubscriptionModel>> _getAllEndingSubscriptions() async {
+    String query = 'SELECT * FROM "${DbConstants.SUBSCRIPTION_TABLE}" '
+        'WHERE ${DbConstants.ENDING_DATE_ATTR} <= ?';
+    List<Map<String, dynamic>> list = await getData(query, [DateTime.now().dateOnly().millisecondsSinceEpoch]);
+    return list.map((it) => SubscriptionModel(
+        it[DbConstants.NAME_ATTR],
+        it[DbConstants.AMOUNT_ATTR],
+        DateTime.fromMillisecondsSinceEpoch(it[DbConstants.STARTING_DATE_ATTR]),
+        DurationType.values[it[DbConstants.DURATION_TYPE_ATTR]],
+        it[DbConstants.CURRENT_SAVED_AMOUNT_ATTR],
+        DateTime.fromMillisecondsSinceEpoch(it[DbConstants.ENDING_DATE_ATTR]
+      )
+    )).toList();
+  }
+
+
   Future<List<DebtModel>> getAllDebts() async {
     List<Map<String, dynamic>> list = await getData(
       'SELECT * FROM "${DbConstants.DEPT_TABLE}"',
@@ -208,15 +256,72 @@ class SqfliteDB {
   }
 
   Future<void> renewSubscription() async {
+    List<SubscriptionModel> subscriptions = await _getAllEndingSubscriptions();
+    DateTime today = DateTime.now().dateOnly();
+    for(SubscriptionModel subscription in subscriptions) {
+      while(today.isAfter(subscription.endingDate ?? subscription.startingDate.addWRT(subscription.durationType))) {
+        subscription.startingDate = subscription.endingDate ?? subscription.startingDate.addWRT(subscription.durationType);
+        subscription.endingDate = subscription.startingDate.addWRT(subscription.durationType);
+      }
+      await _database.rawUpdate(
+        'UPDATE ${DbConstants.SUBSCRIPTION_TABLE} '
+            'SET ${DbConstants.STARTING_DATE_ATTR} = ${subscription.startingDate}, '
+            '${DbConstants.ENDING_DATE_ATTR} = ${subscription.endingDate}, '
+            '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR} = '
+            '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR} - ${DbConstants.AMOUNT_ATTR} '
+            'WHERE ${DbConstants.NAME_ATTR} = ?',
+        [subscription.name],
+      );
+    }
+  }
+
+  Future<void> monthChanged() async {
+    DateTime today = DateTime.now().dateOnly();
+    String query = 'UPDATE ${DbConstants.SUBSCRIPTION_TABLE} '
+        'SET ${DbConstants.CURRENT_SAVED_AMOUNT_ATTR} = '
+        '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR}'
+        ' + '
+        '(${DbConstants.AMOUNT_ATTR} - ${DbConstants.CURRENT_SAVED_AMOUNT_ATTR})'
+        ' / '
+        '(${
+        _getMonthsBetween(
+            today.millisecondsSinceEpoch.toString(),
+            DbConstants.ENDING_DATE_ATTR,
+            '${DbConstants.DURATION_TYPE_ATTR} <= ${DurationType.threeHundredSixtyFiveDays.index}'
+        )
+        })'
+        ' + '
+        'CASE WHEN ${DbConstants.TWISE_IN_MONTH_ATTR} > 0 THEN '
+          '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR}'
+          ' + '
+          '((${DbConstants.AMOUNT_ATTR} - ${DbConstants.CURRENT_SAVED_AMOUNT_ATTR})'
+          ' / '
+          '${DbConstants.TWISE_IN_MONTH_ATTR})'
+          ' ELSE 0 '
+        ' END, '
+        '${DbConstants.TWISE_IN_MONTH_ATTR} = '
+        'CASE WHEN ${DbConstants.TWISE_IN_MONTH_ATTR} > 0 THEN '
+          '${DbConstants.TWISE_IN_MONTH_ATTR} - 1'
+          ' ELSE ${DbConstants.TWISE_IN_MONTH_ATTR}'
+        ' END';
+    print(query);
     await _database.rawUpdate(
-      'UPDATE ${DbConstants.SUBSCRIPTION_TABLE} '
-      //TODO:: change the starting date and ending date
-          // 'SET ${DbConstants.STARTING_DATE_ATTR} = ${DbConstants.ENDING_DATE_ATTR}, '
-          // 'SET ${DbConstants.ENDING_DATE_ATTR} = ${DbConstants.STARTING_DATE_ATTR} + '
-          // '(${DbConstants.DURATION_TYPE_ATTR} * 30 * 24 * 60 * 60 * 1000), '
-          'SET ${DbConstants.CURRENT_SAVED_AMOUNT_ATTR} = 0 '
-          'WHERE ${DbConstants.ENDING_DATE_ATTR} <= ?',
-      [DateTime.now().dateOnly().millisecondsSinceEpoch],
+      query,
+      [],
+    );
+    await _database.rawUpdate(
+      'UPDATE ${DbConstants.DEPT_TABLE} '
+          'SET ${DbConstants.CURRENT_SAVED_AMOUNT_ATTR} = '
+          '${DbConstants.CURRENT_SAVED_AMOUNT_ATTR}'
+          ' + '
+          '(${DbConstants.AMOUNT_ATTR} - ${DbConstants.CURRENT_SAVED_AMOUNT_ATTR})'
+          ' / '
+          '(${_getMonthsBetween(
+              today.millisecondsSinceEpoch.toString(),
+              DbConstants.ENDING_DATE_ATTR,
+              'FALSE'
+          )})',
+      [],
     );
   }
 
